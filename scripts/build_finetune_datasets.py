@@ -909,34 +909,34 @@ if __name__ == '__main__':
     torch.manual_seed(seed)
     random.seed(seed)
 
-    tokenizer = Tokenizer(model_path='/home/michael/models/meta_llama2/tokenizer.model')
+    tokenizer = Tokenizer(model_path='/home/yy/InstructLLaMA/instruct_llama/tokenizer.model')
 
     process_dolly_dataset(
-        src_file='/home/michael/datasets/dolly_15k/databricks-dolly-15k.jsonl',
-        output_dir='./datasets/dolly',
+        src_file='/home/yy/InstructLLaMA/datasets/databricks-dolly-15k.jsonl',
+        output_dir='InstructLLaMA/instruct_llama/datasets/dolly',
         tokenizer=tokenizer,
     )
 
     process_alpaca_dataset(
-        src_file='/home/michael/datasets/alpaca_dataset/alpaca_cleaned.json',
-        output_dir='./datasets/alpaca',
+        src_file='/home/yy/InstructLLaMA/datasets/alpaca_data_cleaned_archive.json',
+        output_dir='InstructLLaMA/instruct_llama/datasets/alpaca',
         tokenizer=tokenizer,
     )
 
     process_squad_dataset(
-        src_dir='/home/michael/datasets/squad_2.0',
-        output_dir='./datasets/squad',
+        src_dir='/home/yy/InstructLLaMA/datasets/squad_2.0',
+        output_dir='InstructLLaMA/instruct_llama/datasets/squad',
         tokenizer=tokenizer,
     )
 
     process_commonsense_dialog_dataset(
-        src_dir='/home/michael/datasets/commonsense_dialogues',
-        output_dir='./datasets/commonsense_dialogues',
+        src_dir='/home/yy/InstructLLaMA/datasets/commonsense_dialogues',
+        output_dir='InstructLLaMA/instruct_llama/datasets/commonsense_dialogues',
         tokenizer=tokenizer,
     )
-
+"""
     process_deepmind_math_dataset(
-        src_dirs=['/home/michael/datasets/mathematics_dataset-v1.0/train-easy'],
+        src_dirs=['/home/yy/InstructLLaMA/instruct_llama/datasets/mathematics_dataset-v1.0/train-easy'],
         output_dir='./datasets/deepmind_mathematics',
         tokenizer=tokenizer,
         max_samples=10000,
@@ -961,3 +961,11 @@ if __name__ == '__main__':
         tokenizer=tokenizer,
         num_workers=16,
     )
+
+        process_hh_dataset(
+        src_dir='/home/yy/InstructLLaMA/instruct_llama/datasets/hh-rlhf/helpful-base',
+        output_dir='/home/yy/InstructLLaMA/instruct_llama/datasets/hh_rlhf_finetune',
+        tokenizer=tokenizer,
+        num_workers=16,
+    )
+"""

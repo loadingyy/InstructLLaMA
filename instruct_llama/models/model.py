@@ -293,6 +293,10 @@ class TransformerBlock(nn.Module):
     ):
         h = x + self.attention.forward(self.attention_norm(x), start_pos, freqs_cis, mask)
         output = h + self.feed_forward.forward(self.ffn_norm(h))
+        self.route_output = self.feed_forward.route_loss
+        self.count = self.feed_forward.count
+        self.miu = self.feed_forward.miu
+        self.theta = self.feed_forward.theta
         return output
 
 
@@ -340,7 +344,6 @@ class Transformer(nn.Module):
         _bsz, seqlen = tokens.shape
         h = self.token_embeddings(tokens)
         h = self.embed_dropout(h)
-
         self.freqs_cis = self.freqs_cis.to(h.device)
         freqs_cis = self.freqs_cis[start_pos : start_pos + seqlen]
 
@@ -354,12 +357,25 @@ class Transformer(nn.Module):
             # (seqlen, cache_len + seqlen), and the only masked entries are (i, j) for
             # j > cache_len + i, since row i corresponds to token cache_len + i.
             mask = torch.hstack([torch.zeros((seqlen, start_pos), device=tokens.device), mask]).type_as(h)
-
+        i=0
         for layer in self.layers:
+            print(f"layer{i} processing")
+            i=i+1
+            
             if self.params.gradient_checkpointing and self.training:
                 h = checkpoint(layer, h, start_pos, freqs_cis, mask, use_reentrant=False)
             else:
                 h = layer(h, start_pos, freqs_cis, mask)
+            self.route_loss = []
+            self.counts = []
+            self.mius = []
+            self.thetas = []
+            self.route_loss.append(layer.route_output) # 1
+            self.counts.append(layer.count) # n_exp
+            self.mius.append(layer.miu) # 1
+            self.thetas.append(layer.theta) # 1
+            self.mius = torch.tensor(self.mius, device = 'cuda')
+            self.thetas = torch.tensor(self.thetas, device = 'cuda')
 
         h = self.post_norm(h)
         h = self.head_dropout(h)

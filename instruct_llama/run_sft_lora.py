@@ -8,6 +8,7 @@ import os
 import functools
 import tqdm
 import random
+import time
 
 import numpy as np
 
@@ -40,7 +41,7 @@ from instruct_llama.utils.logger import create_logger, log_statistics
 from instruct_llama.utils.tracker import StatsTracker
 from instruct_llama.utils.checkpoint import create_lora_checkpoint
 
-from instruct_llama.run_sft import train_step, update_step, run_validation_steps, custom_collate_fn
+from instruct_llama.run_sft import train_step, update_step, run_validation_steps, custom_collate_fn, outer_balance
 
 
 def clear_gpu_cache():
@@ -78,7 +79,7 @@ def main():
     cuda_kwargs = {
         'collate_fn': _collate_fn,
         'num_workers': cfg.dataloader_workers,
-        'pin_memory': False,
+        'pin_memory': True,
         'shuffle': True,
     }
 
@@ -120,7 +121,12 @@ def main():
         logger.info('Training in float32 mode, make sure you have enough GPU RAM')
 
     model_args = LoraModelArgs.from_model_type(
+        #r_MoE_k=cfg.r_MoE_k,
         model_type=cfg.model_type,
+        # MoE configutations
+        MoE=cfg.MoE,
+        n_MoE_exp=cfg.n_MoE_exp,
+        n_MoE_k=cfg.n_MoE_k,
         # LoRA configurations
         lora_r=cfg.lora_r,
         lora_scaling=cfg.lora_scaling,
@@ -158,16 +164,17 @@ def main():
         model_state = torch.load(cfg.pretrain_ckpt_file)
         model.load_state_dict(model_state, strict=False)
         del model_state
-
+    """
     # try to convert the model to half precision, otherwise we can't even move the 7B model to a single RTX 3090
     for name, module in model.named_modules():
         module = module.to(dtype=compute_dtype)
-
+    """
     mark_only_lora_as_trainable(model, train_bias=cfg.train_bias)
 
     # This is where the weights quantization happens
     # when we move the model to cuda, the bnb.nn.Params4bit.cuda() method is called,
     # and the weights is quantized using bnb.functional.quantize_4bit
+
     model = model.to('cuda')
 
     torch.cuda.empty_cache()
@@ -222,15 +229,27 @@ def main():
     logger.info(f'Starting to run {cfg.num_epochs} training epochs, total of {max_train_steps} steps, with batch size {batch_size}')
 
     for epoch in range(1, cfg.num_epochs + 1):  # for each epoch
-        logger.info(f'Start epoch {epoch}')
+        print(f"Epoch {epoch}/{cfg.num_epochs}:")
+
         model.train()
         train_tracker.reset()
         val_tracker.reset()
+        epoch_time = time.time()
+
+        # print("Model parameters:")
+        # for name, param in model.named_parameters():
+        #     print(f"{name} - {param.device}")
 
         for iter, batch in enumerate(train_loader):  # for each batch in current epoch
+            start_time = time.time()
             train_step(model, batch, scaler, cfg.gradient_accum_steps, train_tracker)
+            print(f"batch using time:{time.time() - start_time:.2f} seconds")
 
             if iter % cfg.gradient_accum_steps == 0:
+                balance_time = time.time()
+                outer_balance(model.counts, model.mius, model.thetas, cfg.n_MoE_exp, cfg.gradient_accum_steps, scaler)
+                print(f"using time:{time.time() - balance_time:.2f} seconds")
+
                 grad_norm = get_grad_norm_local(model)
                 update_step(model, optimizer, scheduler, cfg.grad_clip, scaler)
                 train_pbar.update(1)
@@ -264,7 +283,7 @@ def main():
                         best_val_loss = val_stats['loss']
                         logger.info(f'New best validation loss: {best_val_loss:.4f}')
                         create_ckpt_func(model=model, full_path=os.path.join(ckpt_dir, f'lora_{cfg.model_type}-best.pth'))
-
+        print(f"epoch time:{epoch_time}")
     # create a final checkpoint
     create_ckpt_func(model=model, full_path=os.path.join(ckpt_dir, f'lora_{cfg.model_type}-steps-{train_steps}.pth'))
 

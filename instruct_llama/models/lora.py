@@ -61,7 +61,7 @@ logger = logging.getLogger(__name__)
 os.environ['BITSANDBYTES_NOWELCOME'] = '1'
 warnings.filterwarnings('ignore', message=r'.*bitsandbytes was compiled without GPU support.*')
 warnings.filterwarnings('ignore', message=r'MatMul8bitLt: inputs will be cast from .* to float16 during quantization')
-import bitsandbytes as bnb
+#import bitsandbytes as bnb
 
 del os.environ['BITSANDBYTES_NOWELCOME']
 
@@ -110,6 +110,95 @@ class LoRALayer:
         self.merged = False
         self.merge_weights = merge_weights
 
+
+class LoRAMoELinear(nn.Linear, LoRALayer):
+    # LoRAMoE implemented in a sparse layer
+    def __init__(
+        self,
+        in_features: int,
+        out_features: int,
+
+        n: int,
+        # perc: int,
+        r: int = 0,
+        lora_scaling: float = 1.0,
+        lora_dropout: float = 0.0,
+        fan_in_fan_out: bool = False,  # Set this to True if the layer to replace stores weight like (fan_in, fan_out)
+        merge_weights: bool = True,
+        **kwargs,
+    ):
+        nn.Linear.__init__(self, in_features, out_features, bias = False)
+        LoRALayer.__init__(
+            self,
+            r=r,
+            lora_scaling=lora_scaling,
+            lora_dropout=lora_dropout,
+            merge_weights=merge_weights,
+        )
+
+        self.in_features = in_features
+        self.out_features = out_features
+        self.n = n
+        self.fan_in_fan_out = fan_in_fan_out
+        # Actual trainable parameters
+        if r > 0 and n > 0:
+            factory_kwargs = {'device': self.weight.device, 'dtype': self.weight.dtype}
+            self.lora_A = nn.Parameter(torch.empty((n, r, in_features), **factory_kwargs).to('cuda'))
+            self.lora_B = nn.Parameter(torch.empty((n, out_features, r), **factory_kwargs).to('cuda'))
+            # Freezing the pre-trained weight matrix
+            self.weight.requires_grad = False
+        self.reset_parameters()
+        self.weight.data = transpose(self.weight.data, self.fan_in_fan_out)
+
+    def reset_parameters(self):
+        nn.Linear.reset_parameters(self)
+        if hasattr(self, 'lora_A'):
+            # initialize A the same way as the default for nn.Linear and B to zero
+            for i in range(self.n):
+                nn.init.kaiming_uniform_(self.lora_A[i], a=math.sqrt(5))
+                nn.init.zeros_(self.lora_B[i])
+    """
+    def get_delta_weight(self) -> torch.Tensor:
+        return transpose(self.lora_B @ self.lora_A, self.fan_in_fan_out) * self.scaling
+
+    def train(self, mode: bool = True):
+        nn.Linear.train(self, mode)
+        if mode:
+            if self.merge_weights and self.merged:
+                # Make sure that the weights are not merged
+                if self.r > 0:
+                    self.weight.data -= self.get_delta_weight().to(self.weight.dtype)
+                self.merged = False
+        else:
+            if self.merge_weights and not self.merged:
+                # Merge the weights and mark it
+                if self.r > 0:
+                    self.weight.data += self.get_delta_weight().to(self.weight.dtype)
+                self.merged = True
+    """
+
+    def forward(self, x: torch.Tensor, w: torch.Tensor):
+        base = F.linear(x, transpose(self.weight, self.fan_in_fan_out), bias=self.bias)
+        results = []
+        w_shape = w.shape[:-1] # A中除了最后一个维度的维度
+        dim = x.shape[-1]
+        r_shape = (*w_shape, self.out_features) # 后面拼一个输出dim
+        x = x.reshape(-1, dim)
+        w = w.reshape(-1, self.n)
+        kk = w.size(0)
+        assert w.size(0) == x.size(0), "输入与分配维度不一致"
+
+        if self.r > 0 and not self.merged:
+            for i in range(kk):
+                result = torch.zeros(self.out_features, device = x.device)
+                for j in range(self.n):
+                    if w[i, j] != 0:
+                        result += (self.dropout(x[i]) @ self.lora_A[j].transpose(0, 1) @ self.lora_B[j].transpose(0, 1)) * self.scaling
+                results.append(result)
+        result = torch.stack(results, dim = 0)
+        result = result.reshape(r_shape)
+        result = result + base
+        return result
 
 class LoRALinear(nn.Linear, LoRALayer):
     # LoRA implemented in a dense layer
@@ -177,7 +266,7 @@ class LoRALinear(nn.Linear, LoRALayer):
 
         return result
 
-
+"""
 class Params4bit(bnb.nn.Params4bit):
     # as in bitsandbytes version 0.41.3, the original Params4bit has issue when moving model between CPU and GPU.
     # for example, when we try to move a quantized layer to CPU, and later move back to GPU, the weights would stay on CPU
@@ -316,7 +405,7 @@ class LoRALinear4bit(Linear4bit, LoRALayer):
             result += (self.dropout(x) @ self.lora_A.transpose(0, 1) @ self.lora_B.transpose(0, 1)) * self.scaling
 
         return result
-
+"""
 
 def mark_only_lora_as_trainable(model: nn.Module, train_bias: str = 'none', additional_layers: Optional[Tuple[str]] = None) -> None:
     """Freeze all modules except LoRA's and depending on 'bias' value unfreezes bias weights.

@@ -177,14 +177,15 @@ def convert_meta_weights(
 
 if __name__ == '__main__':
     convert_meta_weights(
-        meta_root_ckpt_dir=Path('/home/michael/models/LLaMA-2'),
+        meta_root_ckpt_dir=Path('/home/yy/InstructLLaMA/instruct_llama'),
         output_dir=Path('./meta_checkpoints'),
         model_type='7B',
         verify=True,
     )
-    convert_meta_weights(
+"""    convert_meta_weights(
         meta_root_ckpt_dir=Path('/home/michael/models/LLaMA-2'),
         output_dir=Path('./meta_checkpoints'),
         model_type='7B-chat',
         verify=True,
     )
+"""

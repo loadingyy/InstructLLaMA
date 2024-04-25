@@ -114,7 +114,7 @@ def merge_lora_checkpoint(
     model.eval()
 
     # 4. optional, convert to bfloat16
-    convert_model_to_dtype(model, dtype)
+    # convert_model_to_dtype(model, dtype)
 
     # 5. Remove LoRA parameters from the model state
     state_dict = get_clean_state_dict(model)
@@ -136,7 +136,7 @@ def merge_lora_checkpoint(
 if __name__ == '__main__':
     # fine-tuned model
     merge_lora_checkpoint(
-        base_ckpt_path='/home/michael/models/meta_llama2/llama-2-7b/consolidated.pth',
-        lora_ckpt_path='./checkpoints/sft_lora/7B/lora_7B-steps-3500.pth',
-        save_path='./checkpoints/best/sft_lora/7B/7B-steps-3500-merged.pth',
+        base_ckpt_path='/home/yy/InstructLLaMA/scripts/meta_checkpoints/llama-2-7b/consolidated.pth',
+        lora_ckpt_path='/home/yy/InstructLLaMA/instruct_llama/checkpoints/sft_lora/7B/lora_7B-best.pth',
+        save_path='/home/yy/InstructLLaMA/instruct_llama/checkpoints/sft_lora/7B/merged.pth',
     )

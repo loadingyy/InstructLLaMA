@@ -16,6 +16,7 @@ import torch
 from torch.nn import functional as F
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
+from torch.distributions import Normal
 
 # support running without installing as a package
 from pathlib import Path
@@ -89,6 +90,27 @@ def compute_metrics(logits: torch.Tensor, targets: torch.Tensor, mask: torch.Ten
 
     return (num_accurate, num_samples)
 
+def outer_balance(
+    counts, 
+    mius, 
+    thetas, 
+    n: int,
+    gradient_accum_steps: int,
+    scaler: torch.cuda.amp.GradScaler,
+) -> None:
+    eps = 1e-5
+    loop = len(counts)
+
+    normal = Normal(mius, thetas)
+    norm_prob = normal.log_prob(torch.arange(0, loop, device = mius.device).float())
+    for i in range(loop):
+        count = F.normalize(counts[i], p = 2)
+        loss = torch.exp(norm_prob[i]) * torch.log(torch.exp(norm_prob[i]) / (count + eps) )
+        scaled_loss = loss / gradient_accum_steps
+        if scaler is not None:  # when using float16
+            scaler.scale(scaled_loss).backward()
+        else:
+            scaled_loss.backward()
 
 def train_step(
     model: Transformer,
@@ -107,11 +129,17 @@ def train_step(
         y.to('cuda', non_blocking=True),
         loss_mask.to('cuda', non_blocking=True),
     )
-
+    
     output = model(x)
 
     losses = compute_finetune_loss(output, y, loss_mask)  # [batch_size]
     loss = losses.mean()
+    loss = loss.to('cuda')
+    print(f"LLM loss:", loss)
+    for route_loss in model.route_loss:
+        loss = loss + route_loss * model.params.lr_route
+        print(f"route loss:", route_loss)
+    print(f"total loss:", loss)
     # scale the loss to account for gradient accumulation
     scaled_loss = loss / gradient_accum_steps
 
