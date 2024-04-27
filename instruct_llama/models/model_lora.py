@@ -30,7 +30,7 @@ class LoraModelArgs(llama.ModelArgs):
     n_MoE_exp: int = 128
     n_MoE_k: int = 8
     n_gnn_layers: int = 10 #layers number of gcn
-    thresholds: float = 0.75 # edge connection thresholds
+    thres: float = 0.75 # edge connection thresholds
     lr_route: float = 0.01
     dim_gcn: int = 1024
 
@@ -166,11 +166,12 @@ class moegnn(nn.Module):
             self.convs.append(GCNConv(dim_gcn, dim_gcn, bias = False))
         self.convs.append(GCNConv(dim_gcn, dim, bias = False))
         self.mlp = nn.Linear(dim, dim, bias = False)
+        self.mlp_struct = nn.Linear(dim, dim, bias = False)
         self.nl = nn.ReLU()
         self.lamb = nn.Parameter(torch.tensor(1.5, requires_grad = True))
-        self.miu = n_exp / 2
-        self.theta = nn.Parameter(torch.tensor([1.0]))
-        self.proj = nn.Linear(dim, 1, bias = False)
+        self.miu = nn.Parameter(torch.tensor(n_exp / 2, requires_grad = False) )
+        self.theta = nn.Parameter(torch.tensor([1.0]), requires_grad = True)
+        self.proj = nn.Linear(dim, 1, bias = False) # 分类映射
         self.dim = dim
 
     def get_edges(self, X):
@@ -185,12 +186,14 @@ class moegnn(nn.Module):
                     edges = torch.cat((edges, col), dim=1)
         return edges
 
-    def forward(self, x):
+    def forward(self, yy):
         # x: Node feature matrix of shape [num_nodes, in_channels]
         # edge_index: Graph connectivity matrix of shape [2, num_edges]
+        x = yy.detach()
+        x.requires_grad_(True)
         ori_shape = x.shape[:-1]
         x = self.nl(self.mlp(x)) # linear project
-        exp = self.nl(self.mlp(self.X.T))
+        exp = self.nl(self.mlp_struct(self.X.T))
         exp = exp.T
 
         edge_index = self.get_edges(exp)
@@ -247,15 +250,19 @@ class FeedForward(llama.FeedForward):
         self.w1 = layer_cls(dim, hidden_dim, bias=False)
         self.w2 = layer_cls(hidden_dim, dim, bias=False)
         self.w3 = layer_cls(dim, hidden_dim, bias=False)
-        self.gnn = moegnn(args.dim, args.n_MoE_exp, args.n_gnn_layers, args.thresholds, args.n_MoE_k, args.dim_gcn)
+        self.gnn = moegnn(args.dim, args.n_MoE_exp, args.n_gnn_layers, args.thres, args.n_MoE_k, args.dim_gcn)
         self.miu = self.gnn.miu
         self.theta = self.gnn.theta
+        self.count = torch.zeros(args.n_MoE_exp, requires_grad=True)
         
         # regularization
         self.resid_dropout = nn.Dropout(resid_dropout) if resid_dropout > 0 else nn.Identity()
         
-        
+    def check_grad(grad):
+        print("Gradient to check:", grad)
+
     def forward(self, x):
+        self.count = self.count.to(device = x.device)
         eps = 1e-5
         alloc = self.gnn(x) #get the weight for experts
         lamb = self.gnn.lamb
@@ -269,17 +276,30 @@ class FeedForward(llama.FeedForward):
         self.route_loss = torch.sum(torch.exp(pois_probs) * (pois_probs - torch.log(s_alloc + eps) ), dim = -1) # ...,n_exp
         self.route_loss = torch.sum(self.route_loss) / (self.route_loss.numel() + eps)
         values, indices = torch.topk(alloc, self.gnn.k, dim = -1)
+
+        hook = alloc.register_hook(self.check_grad)
+
+        self.countt = torch.zeros_like(alloc, requires_grad=True)
+        src = torch.ones_like(indices, dtype = self.countt.dtype)
+        self.countt = self.countt.scatter_add(-1, indices, src)
+
+        res = int(self.countt.numel() / self.countt.shape[-1]) 
+        lst = self.countt.shape[-1]
+        self.countt = self.countt.reshape(res, lst)
+        self.countt = torch.sum(self.countt, dim = 0) # top-K count(n_exp)
+        print(f"alloc device:{alloc.device}")
+        print(f"countt device:{self.countt.device}")
+        print(f"count device:{self.count.device}")
+        print(f"x device:{x.device}")
+        self.count = self.count + self.countt
+
         
-        self.count = torch.zeros_like(alloc)
-        src = torch.ones_like(indices, dtype = self.count.dtype)
-        self.count.scatter_(dim=2, index=indices, src=src)
-        self.count = torch.sum(self.count, dim = (-1) ) # top-K count(n_exp)
+        alloc_output = torch.zeros_like(alloc)
+        alloc_output = alloc_output.scatter_(dim = -1, index=indices, src=values) # only top-k (..., n_exp)
 
-        alloc = torch.zeros_like(alloc)
-        alloc = alloc.scatter_(dim = -1, index=indices, src=values) # only top-k (..., n_exp)
-
-        output = self.w2(F.silu(self.w1(x, alloc)) * self.w3(x, alloc), alloc)
+        output = self.w2(F.silu(self.w1(x, alloc_output)) * self.w3(x, alloc_output), alloc_output)
         output = self.resid_dropout(output)
+        hook.remove()
         return output
 
 

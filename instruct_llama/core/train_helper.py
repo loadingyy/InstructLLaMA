@@ -115,6 +115,8 @@ def compute_num_trainable_params(model: Transformer) -> Tuple[int, int]:
     num_frozen_params = 0
 
     for p_name, params in model.named_parameters():
+        #if params.requires_grad:
+        #    print(f"name: {p_name}")
         is_trainable = params.requires_grad
         is_quantized = hasattr(params, 'quant_state')
 

@@ -187,13 +187,13 @@ class LoRAMoELinear(nn.Linear, LoRALayer):
         w = w.reshape(-1, self.n)
         kk = w.size(0)
         assert w.size(0) == x.size(0), "输入与分配维度不一致"
+        x_dropped = self.dropout(x)  # x.shape 应该是 [kk, ...]
 
         if self.r > 0 and not self.merged:
             for i in range(kk):
                 result = torch.zeros(self.out_features, device = x.device)
                 for j in range(self.n):
-                    if w[i, j] != 0:
-                        result += (self.dropout(x[i]) @ self.lora_A[j].transpose(0, 1) @ self.lora_B[j].transpose(0, 1)) * self.scaling
+                    result += w[i, j] * (x_dropped[i] @ self.lora_A[j].transpose(0, 1) @ self.lora_B[j].transpose(0, 1)) * self.scaling
                 results.append(result)
         result = torch.stack(results, dim = 0)
         result = result.reshape(r_shape)
@@ -429,9 +429,9 @@ def mark_only_lora_as_trainable(model: nn.Module, train_bias: str = 'none', addi
     for n, p in model.named_parameters():
         if additional_layers is not None and any((l_n in n for l_n in additional_layers)):
             p.requires_grad = True
-        elif 'lora_' in n:
-            p.requires_grad = True
-        else:
+        elif 'attention' in n:
+            p.requires_grad = False
+        elif 'norm' in n:
             p.requires_grad = False
 
     # depending on the `bias` value unfreeze bias weights

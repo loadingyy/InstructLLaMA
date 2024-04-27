@@ -314,7 +314,6 @@ class Transformer(nn.Module):
         self.layers: Iterable[TransformerBlock] = torch.nn.ModuleList()
         for layer_id in range(params.n_layers):
             self.layers.append(TransformerBlock(layer_id, params))
-
         self.post_norm = RMSNorm(params.dim, eps=params.norm_eps)
 
         if self.params.head_type == 'lm_head':
@@ -327,7 +326,6 @@ class Transformer(nn.Module):
             logger.info('Creating LLaMA-2 model with LM and scalar heads ...')
             self.lm_head = nn.Linear(params.dim, params.vocab_size, bias=False)
             self.scalar_head = nn.Linear(params.dim, 1, bias=False)
-
         self.freqs_cis = precompute_freqs_cis(self.params.dim // self.params.n_heads, self.params.max_seq_len * 2)
 
     def disable_cache(self):
@@ -357,7 +355,13 @@ class Transformer(nn.Module):
             # (seqlen, cache_len + seqlen), and the only masked entries are (i, j) for
             # j > cache_len + i, since row i corresponds to token cache_len + i.
             mask = torch.hstack([torch.zeros((seqlen, start_pos), device=tokens.device), mask]).type_as(h)
+
+        self.route_loss = []
+        self.counts = []
+        self.mius = []
+        self.thetas = []
         i=0
+        
         for layer in self.layers:
             print(f"layer{i} processing")
             i=i+1
@@ -366,17 +370,10 @@ class Transformer(nn.Module):
                 h = checkpoint(layer, h, start_pos, freqs_cis, mask, use_reentrant=False)
             else:
                 h = layer(h, start_pos, freqs_cis, mask)
-            self.route_loss = []
-            self.counts = []
-            self.mius = []
-            self.thetas = []
             self.route_loss.append(layer.route_output) # 1
             self.counts.append(layer.count) # n_exp
             self.mius.append(layer.miu) # 1
             self.thetas.append(layer.theta) # 1
-            self.mius = torch.tensor(self.mius, device = 'cuda')
-            self.thetas = torch.tensor(self.thetas, device = 'cuda')
-
         h = self.post_norm(h)
         h = self.head_dropout(h)
         if self.params.head_type == 'lm_head':

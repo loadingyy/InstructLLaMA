@@ -12,7 +12,7 @@ class config:
     """Supervised fine-tuning using LoRA"""
 
     # model type definition, the details (number of layers, heads etc.) are defined in model.py
-    model_type: str = '7B'  # 7B, 13B, 70B
+    model_type: str = '7B-chat'  # 7B, 13B, 70B
     max_seq_len: int = 512
 
     pretrain_ckpt_file: str = '/home/yy/InstructLLaMA/scripts/meta_checkpoints/llama-2-7b/consolidated.pth'  # load pretrained checkpoint
@@ -43,7 +43,7 @@ class config:
     full_pad: bool = False
 
     # training and validation loops
-    num_epochs: int = 3
+    num_epochs: int = 2
     # accumulate gradients so for each iteration, the actual batch size is = train_batch_size x gradient_accum_steps
     train_batch_size: int = 2
     gradient_accum_steps: int = 16
@@ -54,7 +54,7 @@ class config:
     ckpt_interval: int = 500  # save model checkpoints every N Training steps
 
     # LoRA configuration
-    lora_r: int = 8
+    lora_r: int = 2
     lora_scaling: float = 0.9  # set the LoRA scaling, by default 1.0 no scaling
     lora_dropout: float = 0.0
 
@@ -108,10 +108,10 @@ class config:
     use_profiler: bool = False  # use torch profiler to monitoring traces, be careful as the logs will grow very fast
     
     MoE: bool = True # whether open the MoE
-    n_MoE_exp: int = 64 # number of experts
-    n_MoE_k: int = 8 # top-K experts
+    n_MoE_exp: int = 16 # number of experts
+    n_MoE_k: int = 3 # top-K experts
     #r_MoE_k: float = 0.8 # how many percents of weight is include in activated experts
-    n_gnn_layers: int = 5 #layers number of gcn
+    n_gnn_layers: int = 3 #layers number of gcn
     thresholds: float = 0.75 # edge connection thresholds
-    lr_route: float = 0.01
-    dim_gcn: int = 1024
+    lr_route: float = 0.001
+    dim_gcn: int = 512

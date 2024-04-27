@@ -99,18 +99,21 @@ def outer_balance(
     scaler: torch.cuda.amp.GradScaler,
 ) -> None:
     eps = 1e-5
-    loop = len(counts)
+    counts = torch.stack(counts, dim = 0)
+    mius = torch.stack(mius, dim = 0)
+    thetas = torch.stack(thetas, dim = 0)
+    thetas = torch.squeeze(thetas)
+    loop = counts.size(0)
+    normals = [Normal(mius[i], thetas[i]) for i in range(loop)]
+    norm_prob = [dist.log_prob(torch.arange(0, n, device = thetas.device).float()) for dist in normals]
+    counts = F.normalize(counts, p = 2, dim = 1)
 
-    normal = Normal(mius, thetas)
-    norm_prob = normal.log_prob(torch.arange(0, loop, device = mius.device).float())
+    result = 0
     for i in range(loop):
-        count = F.normalize(counts[i], p = 2)
-        loss = torch.exp(norm_prob[i]) * torch.log(torch.exp(norm_prob[i]) / (count + eps) )
-        scaled_loss = loss / gradient_accum_steps
-        if scaler is not None:  # when using float16
-            scaler.scale(scaled_loss).backward()
-        else:
-            scaled_loss.backward()
+        count = counts[i]
+        loss = torch.sum(torch.exp(norm_prob[i]) * torch.log(torch.exp(norm_prob[i]) / (count + eps) ), dim = -1)
+        result += loss
+    return result / n
 
 def train_step(
     model: Transformer,
@@ -118,6 +121,7 @@ def train_step(
     scaler: torch.cuda.amp.GradScaler,
     gradient_accum_steps: int,
     tracker: StatsTracker,
+    n: int,
 ) -> None:
     """Run a single training step, where we do a forward + backward passes, but do no update parameters"""
 
@@ -138,7 +142,10 @@ def train_step(
     print(f"LLM loss:", loss)
     for route_loss in model.route_loss:
         loss = loss + route_loss * model.params.lr_route
-        print(f"route loss:", route_loss)
+        # print(f"route loss:", route_loss)
+    outer_loss = outer_balance(model.counts, model.mius, model.thetas, n, gradient_accum_steps, scaler)
+    loss += outer_loss * model.params.lr_route
+    print(f"outer_loss:", outer_loss)
     print(f"total loss:", loss)
     # scale the loss to account for gradient accumulation
     scaled_loss = loss / gradient_accum_steps

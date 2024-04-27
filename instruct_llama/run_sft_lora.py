@@ -20,9 +20,8 @@ from torch.utils.tensorboard import SummaryWriter
 from pathlib import Path
 import sys
 
-wd = Path(__file__).parent.parent.resolve()
+wd = Path(__file__).resolve().parent.parent.resolve()
 sys.path.append(str(wd))
-
 
 from instruct_llama.models.model_lora import Transformer, LoraModelArgs
 from instruct_llama.models.tokenizer import Tokenizer
@@ -127,6 +126,10 @@ def main():
         MoE=cfg.MoE,
         n_MoE_exp=cfg.n_MoE_exp,
         n_MoE_k=cfg.n_MoE_k,
+        n_gnn_layers = cfg.n_gnn_layers,
+        thres = cfg.thresholds,
+        lr_route = cfg.lr_route,
+        dim_gcn = cfg.dim_gcn,
         # LoRA configurations
         lora_r=cfg.lora_r,
         lora_scaling=cfg.lora_scaling,
@@ -242,7 +245,7 @@ def main():
 
         for iter, batch in enumerate(train_loader):  # for each batch in current epoch
             start_time = time.time()
-            train_step(model, batch, scaler, cfg.gradient_accum_steps, train_tracker)
+            train_step(model, batch, scaler, cfg.gradient_accum_steps, train_tracker, cfg.n_MoE_exp)
             print(f"batch using time:{time.time() - start_time:.2f} seconds")
 
             if iter % cfg.gradient_accum_steps == 0:
